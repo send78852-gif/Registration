@@ -668,7 +668,8 @@
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
   // ── CONFIG: Paste your Google Apps Script Web App URL here ──
-  const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbzzoq2GiU8qr9GOBDtCqrpS717X0D_9PGqzPmGGS54VCARTb67OpioEItCtgN5p90iU/exec";
+  const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbxV9ML9On3FDop3se_icJblrZWPSPylmdUPSDhL_FC5bjff46SBgh1J8BVRPvo9iN7H/exec";
+  const DRIVE_FOLDER_ID = "1-XBKqSngSOle6Bz3KUm2jepHwHIFjcTb";
 
   // File upload preview
   document.getElementById('inp-resume').addEventListener('change', function() {
@@ -706,12 +707,32 @@
     return 'INT-2025-' + Math.random().toString(36).substr(2,6).toUpperCase();
   }
 
-  // Convert file to Base64
-  function fileToBase64(file) {
-    return new Promise((resolve, reject) => {
+  // ── RESUME UPLOAD DIRECTLY TO GOOGLE DRIVE ──
+  async function uploadResumeToDrive(file, studentName, refId) {
+    return new Promise((resolve) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result);
-      reader.onerror = (err) => reject(err);
+      reader.onload = async function(e) {
+        try {
+          const base64 = e.target.result.split(',')[1];
+          const metadata = {
+            name: refId + '_' + studentName.replace(/\s+/g,'_') + '_' + file.name,
+            resumeBase64: base64,
+            resumeName: file.name,
+            resumeType: file.type || 'application/pdf',
+            action: 'uploadResume'
+          };
+          const resp = await fetch(GOOGLE_SHEET_URL, {
+            method: 'POST',
+            headers: { 'Content-Type': 'text/plain' },
+            body: JSON.stringify(metadata)
+          });
+          const result = await resp.json();
+          resolve(result.fileUrl || 'Upload failed');
+        } catch(err) {
+          resolve('Upload error: ' + err.message);
+        }
+      };
+      reader.onerror = () => resolve('File read error');
       reader.readAsDataURL(file);
     });
   }
@@ -728,7 +749,6 @@
     const terms   = document.getElementById('terms-cb').checked;
 
     let valid = true;
-
     setError('f-name',    !name);               if (!name) valid = false;
     setError('f-email',   !/\S+@\S+\.\S+/.test(email)); if (!/\S+@\S+\.\S+/.test(email)) valid = false;
     setError('f-phone',   phone.replace(/\D/g,'').length < 10); if (phone.replace(/\D/g,'').length < 10) valid = false;
@@ -742,64 +762,55 @@
     else domainErr.style.display = 'none';
 
     if (!terms) { alert('Please accept the Terms & Conditions to proceed.'); valid = false; }
-
     if (!valid) {
       document.querySelector('.has-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
 
-    // Check file size max 5MB
     const resumeFile = document.getElementById('inp-resume').files[0];
     if (resumeFile && resumeFile.size > 5 * 1024 * 1024) {
-      alert('Resume file size 5MB se zyada hai! Chhoti file upload karo.');
+      alert('Resume 5MB se bada hai! Chhoti file upload karo.');
       return;
     }
 
+    // Show loading
     const btn = document.getElementById('submitBtn');
     btn.classList.add('loading');
     btn.disabled = true;
+    btn.querySelector('.btn-loader').textContent = '⏳';
 
     const refId = generateRefId();
     const timestamp = new Date().toLocaleString('en-IN');
 
-    // Build payload
+    // Step 1: Upload resume first if selected
+    let resumeLink = 'Not uploaded';
+    if (resumeFile) {
+      btn.querySelector('.btn-loader').textContent = '📤';
+      resumeLink = await uploadResumeToDrive(resumeFile, name, refId);
+    }
+
+    // Step 2: Save form data to sheet
     const payload = {
+      action: 'saveData',
       timestamp, refId, name, email, phone,
       college, year, city, state,
       domain: domain.value,
-      resumeName: resumeFile ? resumeFile.name : 'Not uploaded',
-      resumeType: resumeFile ? (resumeFile.type || 'application/pdf') : '',
+      resumeLink
     };
 
-    // Convert resume to base64 (upto 5MB)
-    if (resumeFile) {
-      try {
-        const b64full = await fileToBase64(resumeFile);
-        // Remove "data:application/pdf;base64," prefix
-        payload.resumeBase64 = b64full.indexOf(',') !== -1 
-          ? b64full.split(',')[1] 
-          : b64full;
-      } catch(err) {
-        console.warn('Resume read error:', err);
-        payload.resumeBase64 = '';
-      }
-    }
-
-    // Send to Google Sheet + Drive
     try {
       await fetch(GOOGLE_SHEET_URL, {
         method: 'POST',
         headers: { 'Content-Type': 'text/plain' },
         body: JSON.stringify(payload)
       });
-    } catch (e) {
-      // Continue even if fetch errors — data usually goes through
-      console.warn('Fetch note:', e);
+    } catch(e) {
+      console.warn('Data save note:', e);
     }
 
-    // Wait then show success
-    await new Promise(r => setTimeout(r, 2500));
+    await new Promise(r => setTimeout(r, 1000));
 
+    // Show success
     document.getElementById('formCard').style.display = 'none';
     const success = document.getElementById('successScreen');
     success.classList.add('show');
@@ -807,4 +818,4 @@
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
 
-  // Remove error on inp
+    // Remove error on inp
