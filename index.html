@@ -668,7 +668,7 @@
 
 <script data-cfasync="false" src="/cdn-cgi/scripts/5c5dd728/cloudflare-static/email-decode.min.js"></script><script>
   // ── CONFIG: Paste your Google Apps Script Web App URL here ──
-  const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbwzIJ_DOWLcysJwAP70YB6xbvL2OMTfi9DU_Ez2YxnbZm6E78RmuaDipKTtLyAfAAki/exec";
+  const GOOGLE_SHEET_URL = "https://script.google.com/macros/s/AKfycbwmZFaOtwOn2mw9Aw1ymJKiFPmVMLBDii44ffPDrYTSplvsbARoav1k7e5XoCeQOyae/exec";
 
   // File upload preview
   document.getElementById('inp-resume').addEventListener('change', function() {
@@ -710,8 +710,8 @@
   function fileToBase64(file) {
     return new Promise((resolve, reject) => {
       const reader = new FileReader();
-      reader.onload = () => resolve(reader.result.split(',')[1]);
-      reader.onerror = reject;
+      reader.onload = () => resolve(reader.result);
+      reader.onerror = (err) => reject(err);
       reader.readAsDataURL(file);
     });
   }
@@ -729,9 +729,8 @@
 
     let valid = true;
 
-    // Validate
     setError('f-name',    !name);               if (!name) valid = false;
-    setError('f-email',   !/^\S+@\S+\.\S+$/.test(email)); if (!/^\S+@\S+\.\S+$/.test(email)) valid = false;
+    setError('f-email',   !/\S+@\S+\.\S+/.test(email)); if (!/\S+@\S+\.\S+/.test(email)) valid = false;
     setError('f-phone',   phone.replace(/\D/g,'').length < 10); if (phone.replace(/\D/g,'').length < 10) valid = false;
     setError('f-year',    !year);                if (!year) valid = false;
     setError('f-college', !college);             if (!college) valid = false;
@@ -742,59 +741,65 @@
     if (!domain) { domainErr.style.display = 'block'; valid = false; }
     else domainErr.style.display = 'none';
 
-    if (!terms) { alert('⚠️ Please accept the Terms & Conditions to proceed.'); valid = false; }
+    if (!terms) { alert('Please accept the Terms & Conditions to proceed.'); valid = false; }
 
     if (!valid) {
       document.querySelector('.has-error')?.scrollIntoView({ behavior: 'smooth', block: 'center' });
       return;
     }
 
-    // Disable button & show loading
+    // Check file size max 5MB
+    const resumeFile = document.getElementById('inp-resume').files[0];
+    if (resumeFile && resumeFile.size > 5 * 1024 * 1024) {
+      alert('Resume file size 5MB se zyada hai! Chhoti file upload karo.');
+      return;
+    }
+
     const btn = document.getElementById('submitBtn');
     btn.classList.add('loading');
     btn.disabled = true;
 
     const refId = generateRefId();
     const timestamp = new Date().toLocaleString('en-IN');
-    const resumeFile = document.getElementById('inp-resume').files[0];
 
     // Build payload
     const payload = {
       timestamp, refId, name, email, phone,
       college, year, city, state,
       domain: domain.value,
-      resume: resumeFile ? resumeFile.name : 'Not uploaded'
+      resumeName: resumeFile ? resumeFile.name : 'Not uploaded',
+      resumeType: resumeFile ? (resumeFile.type || 'application/pdf') : '',
     };
 
-    // Convert resume to Base64 if selected
+    // Convert resume to base64 (upto 5MB)
     if (resumeFile) {
       try {
-        payload.resumeBase64 = await fileToBase64(resumeFile);
-        payload.resumeName   = resumeFile.name;
-        payload.resumeType   = resumeFile.type || 'application/pdf';
+        const b64full = await fileToBase64(resumeFile);
+        // Remove "data:application/pdf;base64," prefix
+        payload.resumeBase64 = b64full.indexOf(',') !== -1 
+          ? b64full.split(',')[1] 
+          : b64full;
       } catch(err) {
-        console.warn('Resume convert error:', err);
+        console.warn('Resume read error:', err);
+        payload.resumeBase64 = '';
       }
     }
 
-    // Send to Google Sheet
-    if (GOOGLE_SHEET_URL && GOOGLE_SHEET_URL !== "YOUR_GOOGLE_APPS_SCRIPT_URL_HERE") {
-      try {
-        await fetch(GOOGLE_SHEET_URL, {
-          method: 'POST',
-          mode: 'no-cors',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(payload)
-        });
-      } catch (e) {
-        console.warn('Sheet sync warning:', e);
-      }
-    } else {
-      console.table(payload);
-      await new Promise(r => setTimeout(r, 1500));
+    // Send to Google Sheet + Drive
+    try {
+      const response = await fetch(GOOGLE_SHEET_URL, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload)
+      });
+    } catch (e) {
+      console.warn('Submit warning (normal with no-cors):', e);
     }
 
-    // Show success
+    // Wait then show success
+    await new Promise(r => setTimeout(r, 2000));
+
     document.getElementById('formCard').style.display = 'none';
     const success = document.getElementById('successScreen');
     success.classList.add('show');
